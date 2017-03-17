@@ -1,81 +1,156 @@
-#include "threadpool.h"
+/*
+ * Copyright (C) Taka Wang. All rights reserved.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ * 
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * In addition, as a special exception, the copyright holders give
+ * permission to link the code of portions of this program with the
+ * OpenSSL library under certain conditions as described in each
+ * individual source file, and distribute linked combinations
+ * including the two.
+ *
+ * You must obey the GNU General Public License in all respects
+ * for all of the code used other than OpenSSL.
+ */
+
 #include <pthread.h>
 #include <unistd.h>
 #include <assert.h>
-#include "factory.h"                // generated code
+#include <stdbool.h>
+#include "threadpool.h"
+#include "iniparser.h"
+#include "factory.h" // generated code
 
 #define AND &&
-#define TOPIC_LIGHT   "LIGHT"       // DDS topic name
-#define TOPIC_ALARM   "ALARM"       // DDS topic name
-#define TOPIC_WARNING "WARNING"     // DDS topic name
-
-enum 
-{ 
-    MAX_SAMPLES = 200,              // max num of sample for each take
-    THREAD      = 32,               // num of the threads in thread pool
-    QUEUE       = 128               // num of the task queue
-};
-
-typedef enum 
-{ 
-    light_e, 
-    alarm_e,
-    warning_e
-} reader_type;  
+#define STREQ( s1, s2 ) ( strcasecmp ( ( s1 ), ( s2 ) ) == 0 )
+#define MAX_SAMPLES 200 // max num of sample for each take
 
 // global variables
+static IniParserPtr_T parser    = NULL;     // config parser context
+static threadpool_t* pool       = NULL;     // thread pool context
 static dds_condition_t terminated_cond;     // terminated condition variable
 
-extern void thread_task(void *arg);         // thread handler
+// reader type
+typedef enum 
+{ 
+    LIGHT_T, 
+    ALARM_T,
+    WARN_T
+} reader_type_t;  
 
 // compound sample with sample pointer and sample info arrays
 typedef struct compound_sample_s 
 {
     void*              samples_ptr [MAX_SAMPLES];
     dds_sample_info_t  samples_info[MAX_SAMPLES];
-    int sample_count;
-    int counter;
-    reader_type type;
+    int                sample_count;
+    reader_type_t      type;
 } compound_sample_t;
 
-// handle ctrl+c signal
-static void sigint_handler (int fdw_ctrl_type)
+extern void thread_task(void *arg); // thread handler
+
+static void handle_int_signal (int fdw_ctrl_type)
 {
     dds_guard_trigger (terminated_cond);    // set trigger_value
+}
+
+static void change_signal_disposition (void)
+{
+    struct sigaction sat;
+    sat.sa_handler = handle_int_signal;
+    sigemptyset ( &sat.sa_mask );
+    sat.sa_flags = 0;
+    sigaction ( SIGINT, &sat, NULL );
+}
+
+static bool load_config ( const char *const filename )
+{
+    parser = IniParser_Create ( filename );
+    if (0 == IniParser_CheckInstanceError ( parser ))
+    {
+        return true;
+    }
+    else
+    {
+        fprintf ( stderr, "Failed to load config\n");
+        return false;
+    }
+}
+
+static bool init_thread ( int max_thread, int max_queue )
+{
+    pool = threadpool_create ( max_thread, max_queue, 0 );
+    if (pool != NULL)
+    {
+        fprintf ( stderr, "Pool started with %d threads and queue size of %d\n", max_thread, max_queue );
+        return true;
+    }
+    else
+    {
+        fprintf ( stderr, "Failed to start pool with %d threads and queue size of %d\n", max_thread, max_queue );
+        return false;
+    }
+}
+
+static void init ( const char *const ini_filename )
+{
+    change_signal_disposition ();
+    if ( !load_config (ini_filename)) 
+    { 
+        exit(-1);
+    }
+    if ( !init_thread ( IniParser_GetInteger( parser, "basic", "max_thread", 32 ), 
+                        IniParser_GetInteger( parser, "basic", "max_queue", 128 ))) 
+    {
+        exit(-2);
+    }
+}
+
+static void fini (void)
+{
+    IniParser_Destroy ( parser );
+    threadpool_destroy ( pool, threadpool_graceful );
+    sleep (1);
 }
 
 // thread handler
 void thread_task(void *arg) 
 {
-    compound_sample_t* compound_samples_ptr = (compound_sample_t*)arg;
-    DDS_ERR_CHECK (compound_samples_ptr->sample_count, DDS_CHECK_REPORT);
+    compound_sample_t* cs_ptr = (compound_sample_t*)arg;
+    DDS_ERR_CHECK (cs_ptr->sample_count, DDS_CHECK_REPORT);
     
     light_color_t * sample_ptr1 = NULL;
     alarm_msg_t   * sample_ptr2 = NULL;
     warning_msg_t * sample_ptr3 = NULL;
 
     // give chance to catch terminate signal
-    for (uint16_t i = 0; !dds_condition_triggered (terminated_cond) AND 
-                    (i < compound_samples_ptr->sample_count); i++)
+    for (uint16_t i = 0; !dds_condition_triggered (terminated_cond) AND (i < cs_ptr->sample_count); i++)
     {
         // verify sample from sample_info
-        if (compound_samples_ptr->samples_info[i].valid_data)
+        if (cs_ptr->samples_info[i].valid_data)
         {
-            switch (compound_samples_ptr->type)
+            switch (cs_ptr->type)
             {
-                case light_e: 
-                    sample_ptr1 = compound_samples_ptr->samples_ptr[i];
-                    printf("read color(%d): %d, %s, %s, %d\n", 
-                        compound_samples_ptr->counter,
+                case LIGHT_T: 
+                    sample_ptr1 = cs_ptr->samples_ptr[i];
+                    printf("read color: %d, %s, %s, %d\n", 
                         sample_ptr1->machine_id, 
                         sample_ptr1->date,
                         sample_ptr1->time, 
                         sample_ptr1->color);
                     break;
-                case alarm_e: 
-                    sample_ptr2 = compound_samples_ptr->samples_ptr[i];
-                    printf("read alarm(%d): %d, %s, %s, %s, %s, %s\n", 
-                        compound_samples_ptr->counter,
+                case ALARM_T: 
+                    sample_ptr2 = cs_ptr->samples_ptr[i];
+                    printf("read alarm: %d, %s, %s, %s, %s, %s\n", 
                         sample_ptr2->machine_id, 
                         sample_ptr2->date, 
                         sample_ptr2->time, 
@@ -83,10 +158,9 @@ void thread_task(void *arg)
                         sample_ptr2->minor, 
                         sample_ptr2->msg);
                     break;
-                case warning_e:
-                    sample_ptr3 = compound_samples_ptr->samples_ptr[i];
-                    printf("read warning(%d): %d, %s, %s, %s, %s\n", 
-                        compound_samples_ptr->counter,
+                case WARN_T:
+                    sample_ptr3 = cs_ptr->samples_ptr[i];
+                    printf("read warning: %d, %s, %s, %s, %s\n", 
                         sample_ptr3->machine_id, 
                         sample_ptr3->date, 
                         sample_ptr3->time, 
@@ -100,234 +174,132 @@ void thread_task(void *arg)
     }
     //dds_sleepfor (DDS_MSECS(1000)); // simulate busy task, can be remove
 
-    free(compound_samples_ptr);
+    free(cs_ptr);
     assert(arg == NULL);
 }
 
 int main (int argc, char *argv[])
 {
-    // Change signal disposition
-    struct sigaction sat;
-    sat.sa_handler = sigint_handler;
-    sigemptyset (&sat.sa_mask);
-    sat.sa_flags = 0;
-    sigaction (SIGINT, &sat, NULL);
+    // 0. 
+    init ("config.ini");
 
-    // Init thread pool
-    threadpool_t* pool = threadpool_create(THREAD, QUEUE, 0);
-    fprintf(stderr, "Pool started with %d threads and queue size of %d\n", THREAD, QUEUE);
-    
-    // Declare dds entities ------------------------
-    int counter                         = 0;
-
-    dds_qos_t*      qos                 = NULL;
-    dds_entity_t    domain_participant  = NULL;
-    dds_entity_t    subscriber          = NULL;
-
-    dds_entity_t    light_topic         = NULL;
-    dds_entity_t    light_reader        = NULL;
-    dds_condition_t light_cond;         // condition variable
-
-    dds_entity_t    alarm_topic         = NULL;
-    dds_entity_t    alarm_reader        = NULL;
-    dds_condition_t alarm_cond;         // condition variable
-
-    dds_entity_t    warning_topic       = NULL;
-    dds_entity_t    warning_reader      = NULL;
-    dds_condition_t warning_cond;       // condition variable
-
-    dds_waitset_t   ws;
-    dds_attach_t    ws_results[2];
-    size_t          ws_result_size      = 2u;
-    dds_time_t      ws_timeout          = DDS_SECS (20);
-
-    uint32_t        sample_mask         = 0;
-    uint32_t        reader_status       = 0;
-
-    // Initialize DDS ------------------------
+    // 1. Initialize DDS ------------------------------------
     int status = dds_init ( 0, NULL );
     DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
 
-    // Create domain participant
-    status = dds_participant_create (   // factory method to create domain participant
-                &domain_participant,    // pointer to created domain participant entity
-                DDS_DOMAIN_DEFAULT,     // domain id (DDS_DOMAIN_DEFAULT = -1)
-                qos,                    // Qos on created domain participant (can be NULL)
-                NULL                    // Listener on created domain participant (can be NULL)
-            );
+    // 2. Create domain participant  ------------------------
+    dds_entity_t dp  = NULL;
+    status = dds_participant_create ( &dp, DDS_DOMAIN_DEFAULT, NULL, NULL );
     DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
 
-    // Create a subscriber
-    status = dds_subscriber_create (    // factory method to create subscriber
-                domain_participant,     // domain participant entity
-                &subscriber,            // pointer to created subscriber entity
-                qos,                    // Qos on created subscriber (can be NULL)
-                NULL                    // Listener on created subscriber (can be NULL)
-            );
+    // 3. Create a subscriber  ------------------------------
+    dds_entity_t subscriber = NULL;
+    status = dds_subscriber_create ( dp, &subscriber, NULL, NULL );
     DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
 
-    // Create topic light
-    status = dds_topic_create (         // factory method to create topic
-                domain_participant,     // domain participant entity
-                &light_topic,           // pointer to created topic entity
-                &light_color_t_desc,    // pointer to IDL generated topic descriptor
-                TOPIC_LIGHT,            // name of created topic
-                NULL,                   // Qos on created topic (can be NULL)
-                NULL                    // Listener on created topic (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    // Create topic alarm
-    status = dds_topic_create (         // factory method to create topic
-                domain_participant,     // domain participant entity
-                &alarm_topic,           // pointer to created topic entity
-                &alarm_msg_t_desc,      // pointer to IDL generated topic descriptor
-                TOPIC_ALARM,            // name of created topic
-                NULL,                   // Qos on created topic (can be NULL)
-                NULL                    // Listener on created topic (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    // Create topic warning
-    status = dds_topic_create (         // factory method to create topic
-                domain_participant,     // domain participant entity
-                &warning_topic,         // pointer to created topic entity
-                &warning_msg_t_desc,    // pointer to IDL generated topic descriptor
-                TOPIC_WARNING,          // name of created topic
-                NULL,                   // Qos on created topic (can be NULL)
-                NULL                    // Listener on created topic (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    // Create qos ------------------------------------------------------------------
-    qos = dds_qos_create ();
-    dds_qset_reliability (              // Set the reliability policy in the qos structure
-        qos,                            // The pointer to the qos structure
-        DDS_RELIABILITY_RELIABLE,       // kind: {RELIABLE, BEST_EFFORT}
-        DDS_SECS (10)                   // max_blocking_time, default: 100ms
-    );
-    //dds_qset_history (qos, DDS_HISTORY_KEEP_ALL, 0);
-
-    // Create light reader with qos
-    status = dds_reader_create (        // factory method to create typed reader
-                subscriber,             // domain participant entity or subscriber entity
-                &light_reader,          // pointer to created reader entity
-                light_topic,            // topic entity
-                qos,                    // Qos on created reader (can be NULL)
-                NULL                    // Listener on created reader (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    // Create alarm reader with qos
-    status = dds_reader_create (        // factory method to create typed reader
-                subscriber,             // domain participant entity or subscriber entity
-                &alarm_reader,          // pointer to created reader entity
-                alarm_topic,            // topic entity
-                qos,                    // Qos on created reader (can be NULL)
-                NULL                    // Listener on created reader (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    // Create warning reader with qos
-    status = dds_reader_create (        // factory method to create typed reader
-                subscriber,             // domain participant entity or subscriber entity
-                &warning_reader,        // pointer to created reader entity
-                warning_topic,          // topic entity
-                qos,                    // Qos on created reader (can be NULL)
-                NULL                    // Listener on created reader (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    dds_qos_delete (qos);               // delete qos
-
-    ws = dds_waitset_create ();         // create waitset
-
-    terminated_cond = dds_guardcondition_create (); // Init guard condition
-    status = dds_waitset_attach (       // attach guard condition to waitset
-                ws,                     // pointer to a waitset
-                terminated_cond,        // pointer to a condition to wait for the trigger value
-                terminated_cond         // attach condition, could be used to know the reason for the waitset to unblock (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    // light read cond ------------------------------------
-    light_cond = dds_readcondition_create ( 
-                    light_reader,       // Reader entity on which the condition is created
-                    DDS_ANY_STATE       // mask set the sample_state, instance_state and view_state of the sample
-                   ); 
-    dds_status_set_enabled ( 
-        light_reader,                   // Entity to enable the status
-        DDS_DATA_AVAILABLE_STATUS       // mask Status value that indicates the status to be enabled
-    );
-
-    // Attach condition variable to waitset
-    status = dds_waitset_attach (
-                ws,                     // pointer to a waitset
-                light_cond,             // pointer to a condition to wait for the trigger value 
-                light_reader            // attach condition, could be used to know the reason for the waitset to unblock (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    // alarm read cond ------------------------------------
-    alarm_cond = dds_readcondition_create ( 
-                    alarm_reader,       // Reader entity on which the condition is created
-                    DDS_ANY_STATE       // mask set the sample_state, instance_state and view_state of the sample
-                   ); 
-    dds_status_set_enabled ( 
-        alarm_reader,                   // Entity to enable the status
-        DDS_DATA_AVAILABLE_STATUS       // mask Status value that indicates the status to be enabled
-    );
-
-    // Attach condition variable to waitset
-    status = dds_waitset_attach (
-                ws,                     // pointer to a waitset
-                alarm_cond,             // pointer to a condition to wait for the trigger value 
-                alarm_reader            // attach condition, could be used to know the reason for the waitset to unblock (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-
-    // warning read cond ------------------------------------
-    warning_cond = dds_readcondition_create ( 
-                    warning_reader,     // Reader entity on which the condition is created
-                    DDS_ANY_STATE       // mask set the sample_state, instance_state and view_state of the sample
-                   ); 
-    dds_status_set_enabled ( 
-        warning_reader,                 // Entity to enable the status
-        DDS_DATA_AVAILABLE_STATUS       // mask Status value that indicates the status to be enabled
-    );
-
-    // Attach condition variable to waitset
-    status = dds_waitset_attach (
-                ws,                     // pointer to a waitset
-                warning_cond,           // pointer to a condition to wait for the trigger value 
-                warning_reader          // attach condition, could be used to know the reason for the waitset to unblock (can be NULL)
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
-    // Waiting for writer appear -------------------------
-
-    printf ("Waiting for writer...\n");
-    status = dds_waitset_wait (
-                ws,                     // pointer to a waitset
-                ws_results,             // pointer to an array of attached_conditions based on the conditions associated with a waitset (can be NULL)
-                ws_result_size,         // number of attached conditions (can be zero)
-                DDS_INFINITY            // timeout value associated with a waitset (can be INFINITY or some value)
-            ); // inf block
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-
+    // 4. Create waitset ------------------------------------
+    dds_waitset_t ws = dds_waitset_create ();
     
-    // Loop ----------------------------------------------
+    // 5. Init guard condition ------------------------------
+    terminated_cond = dds_guardcondition_create (); 
+    status = dds_waitset_attach ( ws, terminated_cond, terminated_cond );
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
 
-    while (!dds_condition_triggered (terminated_cond) )
+    // 6.1 Create light topic  ------------------------------
+    dds_entity_t light_topic = NULL;
+    status = dds_topic_create ( dp, &light_topic, &light_color_t_desc, 
+                IniParser_GetString (parser, "light", "topic", "LIGHT"), NULL, NULL );
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+
+    // 6.2 Create light qos
+    dds_qos_t* light_qos = dds_qos_create ();
+    dds_reliability_kind_t light_reliability = 
+        STREQ (IniParser_GetString (parser, "light", "reliability", ""), "RELIABLE") ? 
+            DDS_RELIABILITY_RELIABLE : DDS_RELIABILITY_BEST_EFFORT;
+    dds_qset_reliability ( light_qos, light_reliability, DDS_SECS (10) );
+
+    // 6.3 Create light reader with qos
+    dds_entity_t light_reader = NULL;
+    status = dds_reader_create ( subscriber, &light_reader, light_topic, light_qos, NULL );
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+    dds_qos_delete (light_qos); // delete qos
+
+    // 6.4 Create light read cond
+    dds_condition_t light_cond = dds_readcondition_create ( light_reader, DDS_ANY_STATE ); 
+    dds_status_set_enabled ( light_reader, DDS_DATA_AVAILABLE_STATUS );
+
+    // 6.5 Attach light condition variable to waitset
+    status = dds_waitset_attach ( ws, light_cond, light_reader);
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+
+    // 7.1 Create topic alarm  ------------------------------
+    dds_entity_t alarm_topic = NULL;
+    status = dds_topic_create ( dp, &alarm_topic, &alarm_msg_t_desc, 
+                IniParser_GetString (parser, "alarm", "topic", "ALARM"), NULL, NULL );
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+
+    // 7.2 Create alarm qos
+    dds_qos_t* alarm_qos = dds_qos_create ();
+    dds_reliability_kind_t alarm_reliability = 
+        STREQ (IniParser_GetString (parser, "alarm", "reliability", ""), "RELIABLE") ? 
+            DDS_RELIABILITY_RELIABLE : DDS_RELIABILITY_BEST_EFFORT;
+    dds_qset_reliability ( alarm_qos, alarm_reliability, DDS_SECS (10) );
+
+    // 7.3 Create alarm reader with qos
+    dds_entity_t alarm_reader = NULL;
+    status = dds_reader_create ( subscriber, &alarm_reader, alarm_topic, alarm_qos, NULL );
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+    dds_qos_delete (alarm_qos); // delete qos
+
+    // 7.4 Create alarm read cond
+    dds_condition_t alarm_cond = dds_readcondition_create ( alarm_reader, DDS_ANY_STATE ); 
+    dds_status_set_enabled ( alarm_reader, DDS_DATA_AVAILABLE_STATUS );
+
+    // 7.5 Attach alarm condition variable to waitset
+    status = dds_waitset_attach ( ws, alarm_cond, alarm_reader);
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+
+    // 8.1 Create topic warning  ----------------------------
+    dds_entity_t warning_topic = NULL;
+    status = dds_topic_create ( dp, &warning_topic, &warning_msg_t_desc, 
+                IniParser_GetString (parser, "warning", "topic", "WARNING"), NULL, NULL );
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+
+    // 8.2 Create warning qos
+    dds_qos_t* warning_qos = dds_qos_create ();
+    dds_reliability_kind_t warning_reliability = 
+        STREQ (IniParser_GetString (parser, "warning", "reliability", ""), "RELIABLE") ? 
+            DDS_RELIABILITY_RELIABLE : DDS_RELIABILITY_BEST_EFFORT;
+    dds_qset_reliability ( warning_qos, warning_reliability, DDS_SECS (10) );
+
+    // 8.3 Create warning reader with qos
+    dds_entity_t warning_reader = NULL;
+    status = dds_reader_create ( subscriber, &warning_reader, warning_topic, warning_qos, NULL );
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+    dds_qos_delete (warning_qos); // delete qos
+
+    // 8.4 Create warning read cond
+    dds_condition_t warning_cond = dds_readcondition_create ( warning_reader, DDS_ANY_STATE ); 
+    dds_status_set_enabled ( warning_reader, DDS_DATA_AVAILABLE_STATUS );
+
+    // 8.5 Attach warning condition variable to waitset
+    status = dds_waitset_attach ( ws, warning_cond, warning_reader);
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+
+    // 9. Waiting for writer appear -------------------------
+    printf ("Waiting for writer...\n");
+    size_t ws_size = 2u;
+    dds_attach_t ws_results[2];
+    status = dds_waitset_wait (ws, ws_results, ws_size, DDS_INFINITY ); // inf block
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+
+    // 10. Loop ----------------------------------------------
+    uint32_t reader_status = 0;
+    dds_time_t ws_timeout = DDS_SECS (20);
+    while ( !dds_condition_triggered (terminated_cond) )
     {
         // blocking
-        status = dds_waitset_wait ( 
-                    ws,                 // pointer to a waitset
-                    ws_results,         // pointer to an array of attached_conditions based on the conditions associated with a waitset (can be NULL)
-                    ws_result_size,     // number of attached conditions (can be zero)
-                    ws_timeout          // timeout value associated with a waitset (can be INFINITY or some value)
-                );
+        status = dds_waitset_wait ( ws, ws_results, ws_size, ws_timeout );
         DDS_ERR_CHECK (status, DDS_CHECK_REPORT);
 
         // timeout checking
@@ -340,59 +312,45 @@ int main (int argc, char *argv[])
         // num of signaled waitset conditions
         if (status > 0)
         {
-            counter++;
-
-            compound_sample_t* compound_samples_ptr = NULL;
-
-            for (uint16_t i = 0; i < ws_result_size; i++)
+            compound_sample_t * cs_ptr = NULL;
+            
+            for ( uint16_t i = 0; i < ws_size; i++ )
             {
-                if (ws_results[i] != NULL)
+                if ( ws_results[i] != NULL )
                 {
-                    compound_samples_ptr = (compound_sample_t*) calloc (1, sizeof(compound_sample_t));
-                    compound_samples_ptr->counter = counter;
+                    dds_condition_t cond = dds_statuscondition_get (ws_results[i]);
+                    cs_ptr = (compound_sample_t*) calloc (1, sizeof(compound_sample_t));
+                    status = dds_status_take ( ws_results[i], &reader_status, DDS_DATA_AVAILABLE_STATUS );
 
-                    status = dds_status_take (ws_results[i], &reader_status, DDS_DATA_AVAILABLE_STATUS);
-
-                    if (dds_statuscondition_get (light_reader) == dds_statuscondition_get (ws_results[i])) 
+                    if (dds_statuscondition_get (light_reader) == cond) 
                     {
-                        compound_samples_ptr->type = light_e;
+                        cs_ptr->type = LIGHT_T;
                     } 
-                    else if (dds_statuscondition_get (alarm_reader) == dds_statuscondition_get (ws_results[i]))
+                    else if (dds_statuscondition_get (alarm_reader) == cond)
                     {
-                        compound_samples_ptr->type = alarm_e;
+                        cs_ptr->type = ALARM_T;
                     }
-                    else if (dds_statuscondition_get (warning_reader) == dds_statuscondition_get (ws_results[i]))
+                    else if (dds_statuscondition_get (warning_reader) == cond)
                     {
-                        compound_samples_ptr->type = warning_e;
+                        cs_ptr->type = WARN_T;
                     }
                     else
                     {
-                        free (compound_samples_ptr);
-                        compound_samples_ptr = NULL;
+                        free (cs_ptr);
+                        cs_ptr = NULL;
                         continue;
                     }
 
-                    compound_samples_ptr->sample_count = dds_take (
-                        ws_results[i],                          // reader entity 
-                        compound_samples_ptr->samples_ptr,      // (void **) array of pointers to samples (pointers can be NULL)
-                        MAX_SAMPLES,                            // max num of samples to read
-                        compound_samples_ptr->samples_info,     // pointer to an array of dds_sample_info_t
-                        sample_mask                             // filter mask, [sample, view, instance state]
-                    );
+                    cs_ptr->sample_count = dds_take ( ws_results[i], cs_ptr->samples_ptr, MAX_SAMPLES, cs_ptr->samples_info, 0 );
 
-                    if (compound_samples_ptr->sample_count > 0 )
+                    if (cs_ptr->sample_count > 0 )
                     {
-                        threadpool_add (
-                            pool, 
-                            &thread_task, 
-                            compound_samples_ptr, 
-                            0
-                        );
+                        threadpool_add ( pool, &thread_task, cs_ptr, 0 );
                     }
                     else // no sample
                     {
-                        free (compound_samples_ptr);
-                        compound_samples_ptr = NULL;
+                        free (cs_ptr);
+                        cs_ptr = NULL;
                     }
                 }
             }
@@ -401,49 +359,38 @@ int main (int argc, char *argv[])
 
     printf ("Cleaning up...\n");
 
-    threadpool_destroy (pool, threadpool_graceful);
-    dds_sleepfor (DDS_SECS(1));
+    // detach terminal guard cond
+    status = dds_waitset_detach ( ws, terminated_cond );
+    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
+    dds_condition_delete (terminated_cond);
 
     // detach light read cond
-    status = dds_waitset_detach (
-                ws, 
-                light_cond
-            );
+    status = dds_waitset_detach ( ws, light_cond );
     DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
     dds_condition_delete (light_cond);
 
     // detach alarm read cond
-    status = dds_waitset_detach (
-            ws, 
-            alarm_cond
-        );
+    status = dds_waitset_detach ( ws, alarm_cond );
     DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
     dds_condition_delete (alarm_cond);
 
-
     // detach warning read cond
-    status = dds_waitset_detach (
-            ws, 
-            warning_cond
-        );
+    status = dds_waitset_detach ( ws, warning_cond );
     DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
     dds_condition_delete (warning_cond);
-
-
-    // detach terminal guard cond
-    status = dds_waitset_detach (       // Disassociate the condition attached with a waitset
-                ws,                     // pointer to a waitset
-                terminated_cond         // pointer to a condition to wait for the trigger value
-            );
-    DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
-    dds_condition_delete (terminated_cond);
     
     // delete waitset
     status = dds_waitset_delete (ws);
     DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);
 
-    dds_entity_delete (domain_participant);
+    // delete dds entities
+    dds_entity_delete (dp);
     dds_fini ();
+
+    // release all resources
+    fini ();
+    
     printf ("Finished.\n");
     exit(0);
 }
+

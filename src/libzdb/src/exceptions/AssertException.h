@@ -1,8 +1,8 @@
 /*
- * Copyright (C) Taka Wang. All rights reserved.
+ * Copyright (c) 1994,1995,1996,1997 by David R. Hanson.
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2.
+ * it under the terms of the GNU General Public License version 3.
  * 
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -20,5 +20,20 @@
  *
  * You must obey the GNU General Public License in all respects
  * for all of the code used other than OpenSSL.
- */
+*/
 
+
+#ifndef ASSERTEXCEPTION_INCLUDED
+#define ASSERTEXCEPTION_INCLUDED
+#include <Exception.h>
+
+
+/**
+ * Thrown to indicate that an assertion has failed.
+ * @see Exception.h
+ * @file
+ */
+extern Exception_T AssertException;
+
+
+#endif

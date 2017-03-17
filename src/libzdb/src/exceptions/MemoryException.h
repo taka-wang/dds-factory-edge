@@ -1,8 +1,8 @@
 /*
- * Copyright (C) Taka Wang. All rights reserved.
+ * Copyright (C) Tildeslash Ltd. All rights reserved.
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2.
+ * it under the terms of the GNU General Public License version 3.
  * 
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -22,3 +22,20 @@
  * for all of the code used other than OpenSSL.
  */
 
+
+#ifndef MEMORYEXCEPTION_INCLUDED
+#define MEMORYEXCEPTION_INCLUDED
+#include <Exception.h>
+
+
+/**
+ * Thrown to indicate that a memory allocation failed. Every object 
+ * constructor method may throw a MemoryException if the underlying
+ * allocator failed.
+ * @see Exception.h, Mem.h
+ * @file
+ */
+extern Exception_T MemoryException;
+
+
+#endif

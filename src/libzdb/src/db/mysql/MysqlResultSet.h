@@ -1,8 +1,8 @@
 /*
- * Copyright (C) Taka Wang. All rights reserved.
+ * Copyright (C) Tildeslash Ltd. All rights reserved.
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2.
+ * it under the terms of the GNU General Public License version 3.
  * 
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -21,4 +21,17 @@
  * You must obey the GNU General Public License in all respects
  * for all of the code used other than OpenSSL.
  */
-
+#ifndef MYSQLRESULTSET_INCLUDED
+#define MYSQLRESULTSET_INCLUDED
+#define T ResultSetDelegate_T
+T MysqlResultSet_new(void *stmt, int maxRows, int keep);
+void MysqlResultSet_free(T *R);
+int MysqlResultSet_getColumnCount(T R);
+const char *MysqlResultSet_getColumnName(T R, int columnIndex);
+long MysqlResultSet_getColumnSize(T R, int columnIndex);
+int MysqlResultSet_next(T R);
+int MysqlResultSet_isnull(T R, int columnIndex);
+const char *MysqlResultSet_getString(T R, int columnIndex);
+const void *MysqlResultSet_getBlob(T R, int columnIndex, int *size);
+#undef T
+#endif

@@ -1,4 +1,5 @@
 .DS_Store
+src/.DS_Store
 # Object files
 *.o
 *.ko
