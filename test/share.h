@@ -25,15 +25,26 @@
 
 #pragma once
 
-#include "factory.h" // generated code and headers
+#include "factory.h"
 
-typedef void (*sig_hdl)(int);
+typedef void (*signal_handler)(int);
 
-void init ( sig_hdl hdl );
+// change signal disposition
+void init ( signal_handler handle );
+
+// create domain participant and publisher
 void init_dp ( dds_entity_t *dp );
+
+// create typed writer
 void init_writer ( dds_entity_t * dp, 
                    dds_entity_t * writer, 
                    const dds_topic_descriptor_t * desc, 
                    const char * topic_name );
 
+// release all participants
 void fini ( dds_entity_t *dp );
+
+char * random_sentence(void);
+int random_number(int max);
+char * random_date(void);
+char * random_time(void);

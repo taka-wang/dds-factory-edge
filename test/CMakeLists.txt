@@ -16,7 +16,7 @@ SET(PUB3_SOURCES pub3.c share.c)
 
 include_directories (${DDS_HEADER_INCLUDE_DIR} )
 include_directories (${edge_SOURCE_DIR}/src/generated)
-include_directories (${edge_SOURCE_DIR}/src/test)
+include_directories (${edge_SOURCE_DIR}/test)
 
 # pub1
 ADD_EXECUTABLE(${PUB1_NAME} ${PUB1_SOURCES})

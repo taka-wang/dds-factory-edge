@@ -106,12 +106,12 @@ static void init ( const char *const ini_filename )
     change_signal_disposition ();
     if ( !load_config (ini_filename)) 
     { 
-        exit(-1);
+        exit (EXIT_FAILURE);
     }
     if ( !init_thread ( IniParser_GetInteger( parser, "basic", "max_thread", 32 ), 
                         IniParser_GetInteger( parser, "basic", "max_queue", 128 ))) 
     {
-        exit(-2);
+        exit (EXIT_FAILURE);
     }
 }
 
@@ -391,6 +391,6 @@ int main (int argc, char *argv[])
     fini ();
     
     printf ("Finished.\n");
-    exit(0);
+    exit (EXIT_SUCCESS);
 }
 
