@@ -1,0 +1,31 @@
+language: c
+ 
+dist: trusty
+sudo: required
+
+services:
+  - mysql
+ 
+compiler:
+  - gcc
+
+before_install:
+    - export TZ=Asia/Taipei
+    # create database `factory` if not exist
+    - mysql -e 'CREATE DATABASE IF NOT EXISTS factory;'
+
+script:
+    # install vortex lite
+    - yes 'y' | prismtech/P704-VortexLite-2.0.4-Ubuntu1404-x86_64-installer.run
+    - sudo mv y /opt/Prismtech
+    # build libzdb
+    - cd src/libzdb && 
+        autoreconf --force --install && 
+        ./configure --enable-optimized --without-postgresql --without-sqlite && 
+        make && cd $TRAVIS_BUILD_DIR
+    # build repos
+    - mkdir build && cd build
+    - cmake .. && make 
+
+notifications:
+    email: false
