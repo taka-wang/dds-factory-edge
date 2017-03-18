@@ -1,0 +1,6 @@
+[submodule "src/libzdb"]
+	path = src/libzdb
+	url = https://github.com/taka-wang/libzdb.git
+[submodule "src/c-ini-parser"]
+	path = src/c-ini-parser
+	url = https://github.com/taka-wang/c-ini-parser.git
