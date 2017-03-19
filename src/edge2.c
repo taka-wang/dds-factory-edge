@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <assert.h>
 #include <stdbool.h>
+#include "zdb.h"
 #include "threadpool.h"
 #include "iniparser.h"
 #include "factory.h" // generated code
@@ -33,10 +34,14 @@
 #define AND &&
 #define STREQ( s1, s2 ) ( strcasecmp ( ( s1 ), ( s2 ) ) == 0 )
 #define MAX_SAMPLES 200 // max num of sample for each take
+#define MAX_SQL_LEN 512 // max SQL length
 
 // global variables
-static IniParserPtr_T parser    = NULL;     // config parser context
-static threadpool_t* pool       = NULL;     // thread pool context
+static IniParserPtr_T parser            = NULL;     // config parser context
+static threadpool_t* pool               = NULL;     // thread pool context
+static ConnectionPool_T connection_pool = NULL;     // connection pool
+static URL_T url                        = NULL;     // connection url
+
 static dds_condition_t terminated_cond;     // terminated condition variable
 
 // reader type
@@ -86,6 +91,56 @@ static bool load_config ( const char *const filename )
     }
 }
 
+static bool init_database (void)
+{
+    char * buf = (char *)calloc((MAX_SQL_LEN), sizeof(char));
+    snprintf(buf, MAX_SQL_LEN, "mysql://%s:%d/%s?user=%s&password=%s", 
+        IniParser_GetString (parser,  "db", "url", "localhost"),
+        IniParser_GetInteger(parser,  "db", "port", 3306),
+        IniParser_GetString (parser,  "db", "name", "test"),
+        IniParser_GetString (parser,  "db", "user", "root"),
+        IniParser_GetString (parser,  "db", "password", "")
+    );
+    //printf("Connection string: %s\n", buf);
+
+    url = URL_new(buf);
+    free(buf);
+    connection_pool = ConnectionPool_new(url);
+    assert(connection_pool);
+    ConnectionPool_start(connection_pool);
+    Connection_T con = ConnectionPool_getConnection(connection_pool);
+    assert(con);
+    
+    TRY
+    {
+        // light table
+        Connection_execute(con, "CREATE TABLE IF NOT EXISTS %s %s", 
+            IniParser_GetString (parser,  "light", "table_name", "light"), 
+            "(id INT NOT NULL, date VARCHAR(20), time VARCHAR(20), color INT);");
+
+        // alarm table
+        Connection_execute(con, "CREATE TABLE IF NOT EXISTS %s %s", 
+            IniParser_GetString (parser,  "alarm", "table_name", "alarm"), 
+            "(id INT NOT NULL, date VARCHAR(20), time VARCHAR(20), major VARCHAR(200), minor VARCHAR(200), msg VARCHAR(200));");
+        
+        // warning table
+        Connection_execute(con, "CREATE TABLE IF NOT EXISTS %s %s", 
+            IniParser_GetString (parser,  "warning", "table_name", "warning"), 
+            "(id INT NOT NULL, date VARCHAR(20), time VARCHAR(20), msg_num VARCHAR(200), msg VARCHAR(200));");
+    }
+    CATCH(SQLException)
+    {
+            printf("SQLException -- %s\n", Exception_frame.message);
+            return false;
+    }
+    FINALLY
+    {
+            Connection_close(con);
+            return true;
+    }
+    END_TRY;
+}
+
 static bool init_thread ( int max_thread, int max_queue )
 {
     pool = threadpool_create ( max_thread, max_queue, 0 );
@@ -108,6 +163,10 @@ static void init ( const char *const ini_filename )
     { 
         exit (EXIT_FAILURE);
     }
+    if ( !init_database())
+    {
+        exit (EXIT_FAILURE);
+    }
     if ( !init_thread ( IniParser_GetInteger( parser, "basic", "max_thread", 32 ), 
                         IniParser_GetInteger( parser, "basic", "max_queue", 128 ))) 
     {
@@ -117,6 +176,8 @@ static void init ( const char *const ini_filename )
 
 static void fini (void)
 {
+    ConnectionPool_free(&connection_pool);
+    URL_free(&url);
     IniParser_Destroy ( parser );
     threadpool_destroy ( pool, threadpool_graceful );
     sleep (1);

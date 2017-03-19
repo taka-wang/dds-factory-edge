@@ -11,28 +11,32 @@ compiler:
 
 before_install:
     - export TZ=Asia/Taipei
-    # create database `factory` if not exist
+    ### create database `factory` if not exist
     - mysql -e 'CREATE DATABASE IF NOT EXISTS factory;'
 
 script:
-    # install vortex lite
+    ### install vortex lite
     - yes 'y' | prismtech/P704-VortexLite-2.0.4-Ubuntu1404-x86_64-installer.run
     - sudo mv y /opt/Prismtech
     - sudo ln -s /opt/Prismtech/Vortex_v2/Device/VortexLite/2.0.4/lib/linux_gcc_x86/libdds*.* /usr/lib/
-    # build libzdb
+    ### build libzdb
     - cd src/libzdb && 
         autoreconf --force --install && 
-        ./configure --enable-optimized --without-postgresql --without-sqlite && 
-        make && cd $TRAVIS_BUILD_DIR
-    # build repos
+        ./configure --enable-optimized --without-postgresql --without-sqlite --prefix=/usr && 
+        make && sudo make install && cd $TRAVIS_BUILD_DIR
+    ### build repos
     - mkdir build && cd build
     - cmake .. && make && sudo make install
-    # test
+    ### test
     - /usr/bin/sub2 &
     - /usr/bin/pub1 20
     - /usr/bin/pub2 20
     - /usr/bin/pub3 20
-    # check
+    - mysql -e 'USE factory; SHOW TABLES; SHOW COLUMNS FROM alarm; SHOW COLUMNS FROM light; SHOW COLUMNS FROM warning;'
+    - mysql -e 'USE factory; SELECT * FROM alarm;'
+    - mysql -e 'USE factory; SELECT * FROM light;'
+    - mysql -e 'USE factory; SELECT * FROM warning;'
+    ### check
 
 notifications:
     email: false
