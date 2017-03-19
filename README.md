@@ -2,17 +2,91 @@
 
 [![Build Status](https://travis-ci.org/taka-wang/dds-factory-edge.svg?branch=master)](https://travis-ci.org/taka-wang/dds-factory-edge)
 
-DDS subscriber for Edge server
+DDS subscriber for Edge server based on Vortex Lite.
 
-## Continuous Integration
+## // Continuous Integration
 
-Please check the [build log](https://travis-ci.org/taka-wang/dds-factory-edge) and [build script](.travis.yml).
+Please check the [log](https://travis-ci.org/taka-wang/dds-factory-edge) and [script](.travis.yml) to know how to build this software.
 
-## Configuration
+## // Build from scratch
 
-Please check the [sample config file](src/config.ini).
+```bash
+# Install dev-deps
+sudo apt-get update
+sudo apt-get install -y git pkg-config automake cmake libtool re2c libmysqlclient-dev mysql-client-core-5.6
 
-## DDS IDL
+# Create database (assume local mysql server with empty password)
+mysql -e 'CREATE DATABASE IF NOT EXISTS factory;'
+
+# Setup repo
+git clone https://github.com/taka-wang/dds-factory-edge.git
+cd dds-factory-edge
+git submodule update --init --recursive
+
+# Install vortex lite
+yes 'y' | prismtech/P704-VortexLite-2.0.4-Ubuntu1404-x86_64-installer.run
+sudo mv y /opt/Prismtech
+sudo ln -s /opt/Prismtech/Vortex_v2/Device/VortexLite/2.0.4/lib/linux_gcc_x86/libdds*.* /usr/lib/
+
+# Install libzdb
+cd src/libzdb
+autoreconf --force --install
+./configure --enable-optimized --without-postgresql --without-sqlite --prefix=/usr
+make && sudo make install
+cd ../..
+
+# Build repo
+mkdir build && cd build
+cmake .. && make && sudo make install
+
+# Run test
+./sub2 &
+./pub1 20
+./pub2 20
+./pub3 20
+```
+
+## // Configuration
+
+```ini
+; Config sample
+
+[db]
+url         = localhost     ; mysql url
+port        = 3306          ; mysql port
+user        = root          ; mysql account
+password    =               ; mysql password
+name        = factory       ; db name
+
+[basic]
+max_sample  = 200           ; max DDS sample per take
+max_thread  = 32            ; max thread
+max_queue   = 128           ; max queue
+
+; DDS settings
+
+[light]
+table_name  = light         ; table name
+topic       = LIGHT         ; dds topic
+reliability = RELIABLE
+
+[alarm]
+table_name  = alarm         ; table name
+topic       = ALARM         ; dds topic
+reliability = RELIABLE
+
+[warning]
+table_name  = warning       ; table name
+topic       = WARNING       ; dds topic
+reliability = RELIABLE
+
+[machine_status]
+topic       = OT            ; dds topic
+reliability = BEST_EFFORT
+
+```
+
+## // DDS IDL
 
 ```c
 /**
@@ -93,7 +167,7 @@ struct table_schema_t {
 #pragma keylist table_schema_t  /**< keyless.                               */
 ```
 
-## Table Schema
+## // Table Schema
 
 ### Light table
 
@@ -136,7 +210,14 @@ struct table_schema_t {
 +---------+--------------+------+-----+---------+-------+
 ```
 
-## License
+## // Dependencies
+
+- [thread pool](https://github.com/mbrossard/threadpool): An elegant thread pool.
+- [c-ini-parser](https://github.com/taka-wang/c-ini-parser): INI Parser in C.
+- [libzdb](https://github.com/taka-wang/libzdb): A thread-safe multi database connection pool library.
+- [Vortex Lite](http://www.prismtech.com/vortex/software-downloads): A DDS library.
+
+## // License
 
 Copyright 2017 - Taka Wang.
 
