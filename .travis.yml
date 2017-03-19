@@ -32,11 +32,11 @@ script:
     - /usr/bin/pub1 20
     - /usr/bin/pub2 20
     - /usr/bin/pub3 20
-    - mysql -e 'USE factory; SHOW TABLES; SHOW COLUMNS FROM alarm; SHOW COLUMNS FROM light; SHOW COLUMNS FROM warning;'
-    - mysql -e 'USE factory; SELECT * FROM alarm;'
-    - mysql -e 'USE factory; SELECT * FROM light;'
-    - mysql -e 'USE factory; SELECT * FROM warning;'
     ### check
+    - mysql -e 'USE factory; SHOW TABLES; SHOW COLUMNS FROM alarm; SHOW COLUMNS FROM light; SHOW COLUMNS FROM warning;'
+    - mysql -e 'USE factory; SELECT * FROM light;'
+    - mysql -e 'USE factory; SELECT * FROM alarm;'
+    - mysql -e 'USE factory; SELECT * FROM warning;'
 
 notifications:
     email: false

@@ -34,7 +34,7 @@
 #define AND &&
 #define STREQ( s1, s2 ) ( strcasecmp ( ( s1 ), ( s2 ) ) == 0 )
 #define MAX_SAMPLES 200 // max num of sample for each take
-#define MAX_SQL_LEN 512 // max SQL length
+#define MAX_URL_LEN 256 // max SQL length
 
 // global variables
 static IniParserPtr_T parser            = NULL;     // config parser context
@@ -91,10 +91,10 @@ static bool load_config ( const char *const filename )
     }
 }
 
-static bool init_database (void)
+static bool init_connection_pool (void)
 {
-    char * buf = (char *)calloc((MAX_SQL_LEN), sizeof(char));
-    snprintf(buf, MAX_SQL_LEN, "mysql://%s:%d/%s?user=%s&password=%s", 
+    char * buf = (char *)calloc((MAX_URL_LEN), sizeof(char));
+    snprintf(buf, MAX_URL_LEN, "mysql://%s:%d/%s?user=%s&password=%s", 
         IniParser_GetString (parser,  "db", "url", "localhost"),
         IniParser_GetInteger(parser,  "db", "port", 3306),
         IniParser_GetString (parser,  "db", "name", "test"),
@@ -108,35 +108,36 @@ static bool init_database (void)
     connection_pool = ConnectionPool_new(url);
     assert(connection_pool);
     ConnectionPool_start(connection_pool);
-    Connection_T con = ConnectionPool_getConnection(connection_pool);
-    assert(con);
+    Connection_T conn = ConnectionPool_getConnection(connection_pool);
+    assert(conn);
     
+    // create tables if not exists
     TRY
     {
         // light table
-        Connection_execute(con, "CREATE TABLE IF NOT EXISTS %s %s", 
+        Connection_execute(conn, "CREATE TABLE IF NOT EXISTS %s %s", 
             IniParser_GetString (parser,  "light", "table_name", "light"), 
             "(id INT NOT NULL, date VARCHAR(20), time VARCHAR(20), color INT);");
 
         // alarm table
-        Connection_execute(con, "CREATE TABLE IF NOT EXISTS %s %s", 
+        Connection_execute(conn, "CREATE TABLE IF NOT EXISTS %s %s", 
             IniParser_GetString (parser,  "alarm", "table_name", "alarm"), 
             "(id INT NOT NULL, date VARCHAR(20), time VARCHAR(20), major VARCHAR(200), minor VARCHAR(200), msg VARCHAR(200));");
         
         // warning table
-        Connection_execute(con, "CREATE TABLE IF NOT EXISTS %s %s", 
+        Connection_execute(conn, "CREATE TABLE IF NOT EXISTS %s %s", 
             IniParser_GetString (parser,  "warning", "table_name", "warning"), 
             "(id INT NOT NULL, date VARCHAR(20), time VARCHAR(20), msg_num VARCHAR(200), msg VARCHAR(200));");
     }
     CATCH(SQLException)
     {
-            printf("SQLException -- %s\n", Exception_frame.message);
-            return false;
+        printf("SQLException -- %s\n", Exception_frame.message);
+        return false;
     }
     FINALLY
     {
-            Connection_close(con);
-            return true;
+        Connection_close(conn);
+        return true;
     }
     END_TRY;
 }
@@ -163,7 +164,7 @@ static void init ( const char *const ini_filename )
     { 
         exit (EXIT_FAILURE);
     }
-    if ( !init_database())
+    if ( !init_connection_pool())
     {
         exit (EXIT_FAILURE);
     }
@@ -176,8 +177,7 @@ static void init ( const char *const ini_filename )
 
 static void fini (void)
 {
-    ConnectionPool_free(&connection_pool);
-    URL_free(&url);
+    ConnectionPool_free(&connection_pool); URL_free(&url);
     IniParser_Destroy ( parser );
     threadpool_destroy ( pool, threadpool_graceful );
     sleep (1);
@@ -189,52 +189,53 @@ void thread_task(void *arg)
     compound_sample_t* cs_ptr = (compound_sample_t*)arg;
     DDS_ERR_CHECK (cs_ptr->sample_count, DDS_CHECK_REPORT);
     
-    light_color_t * sample_ptr1 = NULL;
-    alarm_msg_t   * sample_ptr2 = NULL;
-    warning_msg_t * sample_ptr3 = NULL;
+    light_color_t * ptr1 = NULL;
+    alarm_msg_t   * ptr2 = NULL;
+    warning_msg_t * ptr3 = NULL;
 
-    // give chance to catch terminate signal
-    for (uint16_t i = 0; !dds_condition_triggered (terminated_cond) AND (i < cs_ptr->sample_count); i++)
+    Connection_T conn = ConnectionPool_getConnection(connection_pool);
+    if ( NULL != conn ) 
     {
-        // verify sample from sample_info
-        if (cs_ptr->samples_info[i].valid_data)
+        // give chance to catch terminate signal
+        for (uint16_t i = 0; !dds_condition_triggered (terminated_cond) AND (i < cs_ptr->sample_count); i++)
         {
-            switch (cs_ptr->type)
+            // verify sample from sample_info
+            if (cs_ptr->samples_info[i].valid_data)
             {
-                case LIGHT_T: 
-                    sample_ptr1 = cs_ptr->samples_ptr[i];
-                    printf("read color: %d, %s, %s, %d\n", 
-                        sample_ptr1->machine_id, 
-                        sample_ptr1->date,
-                        sample_ptr1->time, 
-                        sample_ptr1->color);
-                    break;
-                case ALARM_T: 
-                    sample_ptr2 = cs_ptr->samples_ptr[i];
-                    printf("read alarm: %d, %s, %s, %s, %s, %s\n", 
-                        sample_ptr2->machine_id, 
-                        sample_ptr2->date, 
-                        sample_ptr2->time, 
-                        sample_ptr2->major, 
-                        sample_ptr2->minor, 
-                        sample_ptr2->msg);
-                    break;
-                case WARN_T:
-                    sample_ptr3 = cs_ptr->samples_ptr[i];
-                    printf("read warning: %d, %s, %s, %s, %s\n", 
-                        sample_ptr3->machine_id, 
-                        sample_ptr3->date, 
-                        sample_ptr3->time, 
-                        sample_ptr3->msg_num,
-                        sample_ptr3->msg);
-                    break;
-                default:
-                    break;
+                switch (cs_ptr->type)
+                {
+                    case LIGHT_T: 
+                        ptr1 = cs_ptr->samples_ptr[i];
+                        Connection_execute (conn, "INSERT INTO %s VALUES (%d, \"%s\", \"%s\", %d)", 
+                            IniParser_GetString (parser,  "light", "table_name", "light"), 
+                            ptr1->machine_id, ptr1->date, ptr1->time, ptr1->color);
+                        //printf("read color: %d, %s, %s, %d\n", ptr1->machine_id, ptr1->date, ptr1->time, ptr1->color);
+                        break;
+                    case ALARM_T: 
+                        ptr2 = cs_ptr->samples_ptr[i];
+                        Connection_execute (conn, "INSERT INTO %s VALUES (%d, \"%s\", \"%s\", \"%s\", \"%s\", \"%s\")", 
+                            IniParser_GetString (parser,  "alarm", "table_name", "alarm"), 
+                            ptr2->machine_id, ptr2->date, ptr2->time, ptr2->major, ptr2->minor, ptr2->msg);
+                        //printf("read alarm: %d, %s, %s, %s, %s, %s\n", ptr2->machine_id, ptr2->date, ptr2->time, ptr2->major, ptr2->minor, ptr2->msg);
+                        break;
+                    case WARN_T:
+                        ptr3 = cs_ptr->samples_ptr[i];
+                        Connection_execute (conn, "INSERT INTO %s VALUES (%d, \"%s\", \"%s\" ,\"%s\" ,\"%s\")", 
+                            IniParser_GetString (parser,  "warning", "table_name", "warning"), 
+                            ptr3->machine_id, ptr3->date, ptr3->time, ptr3->msg_num, ptr3->msg);
+                        //printf("read warning: %d, %s, %s, %s, %s\n", ptr3->machine_id, ptr3->date, ptr3->time, ptr3->msg_num, ptr3->msg);
+                        break;
+                    default:
+                        break;
+                }
             }
         }
+        Connection_close(conn);
     }
-    //dds_sleepfor (DDS_MSECS(1000)); // simulate busy task, can be remove
-
+    else
+    {
+        printf("Fail to get context from connection pool!\n");
+    }
     free(cs_ptr);
     assert(arg == NULL);
 }
@@ -455,4 +456,3 @@ int main (int argc, char *argv[])
     printf ("Finished.\n");
     exit (EXIT_SUCCESS);
 }
-

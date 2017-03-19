@@ -6,7 +6,11 @@ DDS subscriber for Edge server
 
 ## Continuous Integration
 
-Please check the [build log](https://travis-ci.org/taka-wang/dds-factory-edge) and [travis config](.travis.yml).
+Please check the [build log](https://travis-ci.org/taka-wang/dds-factory-edge) and [build script](.travis.yml).
+
+## Configuration
+
+Please check the [sample config file](src/config.ini).
 
 ## DDS IDL
 
@@ -87,6 +91,49 @@ struct table_schema_t {
     string value;               /**< specific table schema (json string).   */
 };
 #pragma keylist table_schema_t  /**< keyless.                               */
+```
+
+## Table Schema
+
+### Light table
+
+```
++-------+-------------+------+-----+---------+-------+
+| Field | Type        | Null | Key | Default | Extra |
++-------+-------------+------+-----+---------+-------+
+| id    | int(11)     | NO   |     | NULL    |       |
+| date  | varchar(20) | YES  |     | NULL    |       |
+| time  | varchar(20) | YES  |     | NULL    |       |
+| color | int(11)     | YES  |     | NULL    |       |
++-------+-------------+------+-----+---------+-------+
+```
+
+### Alarm messages table
+```
++-------+--------------+------+-----+---------+-------+
+| Field | Type         | Null | Key | Default | Extra |
++-------+--------------+------+-----+---------+-------+
+| id    | int(11)      | NO   |     | NULL    |       |
+| date  | varchar(20)  | YES  |     | NULL    |       |
+| time  | varchar(20)  | YES  |     | NULL    |       |
+| major | varchar(200) | YES  |     | NULL    |       |
+| minor | varchar(200) | YES  |     | NULL    |       |
+| msg   | varchar(200) | YES  |     | NULL    |       |
++-------+--------------+------+-----+---------+-------+
+```
+
+### Warning messages table
+
+```
++---------+--------------+------+-----+---------+-------+
+| Field   | Type         | Null | Key | Default | Extra |
++---------+--------------+------+-----+---------+-------+
+| id      | int(11)      | NO   |     | NULL    |       |
+| date    | varchar(20)  | YES  |     | NULL    |       |
+| time    | varchar(20)  | YES  |     | NULL    |       |
+| msg_num | varchar(200) | YES  |     | NULL    |       |
+| msg     | varchar(200) | YES  |     | NULL    |       |
++---------+--------------+------+-----+---------+-------+
 ```
 
 ## License

@@ -34,7 +34,7 @@ static void emit ( dds_entity_t * writer )
     writer_msg.date = random_date();
     writer_msg.time = random_time();
     writer_msg.msg_num = random_sentence();
-    writer_msg.msg = "Your software just isn’t mission critical";
+    writer_msg.msg = "Your software just isn't mission critical";
     writer_msg.machine_id = random_number(200);
     
     int status = dds_write ( *writer, &writer_msg );
