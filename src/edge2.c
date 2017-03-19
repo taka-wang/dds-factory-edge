@@ -181,8 +181,9 @@ void thread_task(void *arg)
 int main (int argc, char *argv[])
 {
     // 0. 
-    init ("config.ini");
-
+    const char * config_name = (argc > 1) ? argv[1] : "/etc/edge/config.ini";
+    init (config_name);
+    
     // 1. Initialize DDS ------------------------------------
     int status = dds_init ( 0, NULL );
     DDS_ERR_CHECK (status, DDS_CHECK_REPORT | DDS_CHECK_EXIT);

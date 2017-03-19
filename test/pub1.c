@@ -48,15 +48,18 @@ static void emit ( dds_entity_t * writer )
 
 int main (int argc, char *argv[])
 {
+    uint16_t counter = 50;
+    if (argc > 1) counter = strtoimax(argv[1], NULL, 10);
     init (sigint_handler);
     dds_entity_t dp = NULL;
     init_dp (&dp);
     dds_entity_t writer = NULL;
     init_writer (&dp, &writer, &light_color_t_desc, TOPIC);
 
-    while (do_loop) 
+    while ( do_loop && counter > 0) 
     {
         emit (&writer);
+        counter--;
     }
 
     fini (&dp);
