@@ -11,7 +11,7 @@ SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 SET(CMAKE_INSTALL_PREFIX "/usr/")
 
 add_subdirectory(src/generated)
-add_subdirectory(src/threadpool)
+#add_subdirectory(src/threadpool)
 add_subdirectory(src/c-ini-parser)
 add_subdirectory(test)
 add_subdirectory(src)

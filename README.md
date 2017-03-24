@@ -212,8 +212,8 @@ struct table_schema_t {
 
 ## // Dependencies
 
-- [thread pool](https://github.com/mbrossard/threadpool): An elegant thread pool.
-- [c-ini-parser](https://github.com/taka-wang/c-ini-parser): INI Parser in C.
+- [thread pool](https://github.com/mbrossard/threadpool): A simple C Thread pool implementation.
+- [c-ini-parser](https://github.com/taka-wang/c-ini-parser): An simple INI parser based on inih in OOP style C99.
 - [libzdb](https://github.com/taka-wang/libzdb): A thread-safe multi database connection pool library.
 - [Vortex Lite](http://www.prismtech.com/vortex/software-downloads): A DDS library.
 
